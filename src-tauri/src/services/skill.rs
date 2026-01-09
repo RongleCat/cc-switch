@@ -45,6 +45,12 @@ pub struct DiscoverableSkill {
     /// 分支名称
     #[serde(rename = "repoBranch")]
     pub repo_branch: String,
+    /// 仓库类型
+    #[serde(rename = "repoType", default)]
+    pub repo_type: RepoType,
+    /// ZIP 下载链接（zip 类型使用）
+    #[serde(rename = "zipUrl", skip_serializing_if = "Option::is_none")]
+    pub zip_url: Option<String>,
 }
 
 /// 技能对象（兼容旧 API，内部使用 DiscoverableSkill）
@@ -74,17 +80,32 @@ pub struct Skill {
     pub repo_branch: Option<String>,
 }
 
+/// 仓库类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoType {
+    #[default]
+    Github,
+    Zip,
+}
+
 /// 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRepo {
-    /// GitHub 用户/组织名
+    /// GitHub 用户/组织名（github 类型使用）
     pub owner: String,
-    /// 仓库名称
+    /// 仓库名称（github 类型使用）或显示名称（zip 类型使用）
     pub name: String,
-    /// 分支 (默认 "main")
+    /// 分支 (默认 "main"，github 类型使用)
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
+    /// 仓库类型: github 或 zip
+    #[serde(rename = "repoType", default)]
+    pub repo_type: RepoType,
+    /// ZIP 下载链接（zip 类型使用）
+    #[serde(rename = "zipUrl", skip_serializing_if = "Option::is_none")]
+    pub zip_url: Option<String>,
 }
 
 /// 技能安装状态（旧版兼容）
@@ -116,18 +137,24 @@ impl Default for SkillStore {
                     name: "skills".to_string(),
                     branch: "main".to_string(),
                     enabled: true,
+                    repo_type: RepoType::Github,
+                    zip_url: None,
                 },
                 SkillRepo {
                     owner: "ComposioHQ".to_string(),
                     name: "awesome-claude-skills".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    repo_type: RepoType::Github,
+                    zip_url: None,
                 },
                 SkillRepo {
                     owner: "cexll".to_string(),
                     name: "myclaude".to_string(),
                     branch: "master".to_string(),
                     enabled: true,
+                    repo_type: RepoType::Github,
+                    zip_url: None,
                 },
             ],
         }
@@ -245,12 +272,26 @@ impl SkillService {
                 name: skill.repo_name.clone(),
                 branch: skill.repo_branch.clone(),
                 enabled: true,
+                repo_type: skill.repo_type.clone(),
+                zip_url: skill.zip_url.clone(),
             };
 
             // 下载仓库
+            let download_future = async {
+                match repo.repo_type {
+                    RepoType::Github => self.download_repo(&repo).await,
+                    RepoType::Zip => {
+                        let zip_url = repo.zip_url.as_ref().ok_or_else(|| {
+                            anyhow!("ZIP 仓库缺少 zip_url")
+                        })?;
+                        self.download_zip_repo(zip_url, &repo.name).await
+                    }
+                }
+            };
+
             let temp_dir = timeout(
                 std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
+                download_future,
             )
             .await
             .map_err(|_| {
@@ -699,19 +740,40 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let temp_dir = timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-            .await
-            .map_err(|_| {
-                anyhow!(format_skill_error(
-                    "DOWNLOAD_TIMEOUT",
-                    &[
-                        ("owner", &repo.owner),
-                        ("name", &repo.name),
-                        ("timeout", "60")
-                    ],
-                    Some("checkNetwork"),
-                ))
-            })??;
+        let temp_dir = match repo.repo_type {
+            RepoType::Github => {
+                timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
+                    .await
+                    .map_err(|_| {
+                        anyhow!(format_skill_error(
+                            "DOWNLOAD_TIMEOUT",
+                            &[
+                                ("owner", &repo.owner),
+                                ("name", &repo.name),
+                                ("timeout", "60")
+                            ],
+                            Some("checkNetwork"),
+                        ))
+                    })??
+            }
+            RepoType::Zip => {
+                let zip_url = repo.zip_url.as_ref().ok_or_else(|| {
+                    anyhow!("ZIP 仓库缺少 zip_url 配置")
+                })?;
+                timeout(std::time::Duration::from_secs(60), self.download_zip_repo(zip_url, &repo.name))
+                    .await
+                    .map_err(|_| {
+                        anyhow!(format_skill_error(
+                            "DOWNLOAD_TIMEOUT",
+                            &[
+                                ("name", &repo.name),
+                                ("timeout", "60")
+                            ],
+                            Some("checkNetwork"),
+                        ))
+                    })??
+            }
+        };
 
         let mut skills = Vec::new();
         let scan_dir = temp_dir.clone();
@@ -772,18 +834,25 @@ impl SkillService {
     ) -> Result<DiscoverableSkill> {
         let meta = self.parse_skill_metadata(skill_md)?;
 
+        let readme_url = match repo.repo_type {
+            RepoType::Github => Some(format!(
+                "https://github.com/{}/{}/tree/{}/{}",
+                repo.owner, repo.name, repo.branch, directory
+            )),
+            RepoType::Zip => repo.zip_url.clone(), // zip 类型直接用 zip 链接作为参考
+        };
+
         Ok(DiscoverableSkill {
             key: format!("{}/{}:{}", repo.owner, repo.name, directory),
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
             directory: directory.to_string(),
-            readme_url: Some(format!(
-                "https://github.com/{}/{}/tree/{}/{}",
-                repo.owner, repo.name, repo.branch, directory
-            )),
+            readme_url,
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
+            repo_type: repo.repo_type.clone(),
+            zip_url: repo.zip_url.clone(),
         })
     }
 
@@ -861,6 +930,16 @@ impl SkillService {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
     }
 
+    /// 从 ZIP 链接下载仓库
+    async fn download_zip_repo(&self, zip_url: &str, name: &str) -> Result<PathBuf> {
+        let temp_dir = tempfile::tempdir()?;
+        let temp_path = temp_dir.path().to_path_buf();
+        let _ = temp_dir.keep();
+
+        self.download_and_extract_zip(zip_url, &temp_path, name).await?;
+        Ok(temp_path)
+    }
+
     /// 下载并解压 ZIP
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
         let response = self.http_client.get(url).send().await?;
@@ -910,6 +989,84 @@ impl SkillService {
             }
 
             let outpath = dest.join(relative_path);
+
+            if file.is_dir() {
+                fs::create_dir_all(&outpath)?;
+            } else {
+                if let Some(parent) = outpath.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut outfile = fs::File::create(&outpath)?;
+                std::io::copy(&mut file, &mut outfile)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 下载并解压 ZIP（用于任意 zip 链接）
+    async fn download_and_extract_zip(&self, url: &str, dest: &Path, name: &str) -> Result<()> {
+        let response = self.http_client.get(url).send().await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16().to_string();
+            return Err(anyhow::anyhow!(format_skill_error(
+                "DOWNLOAD_FAILED",
+                &[("status", &status)],
+                match status.as_str() {
+                    "403" => Some("http403"),
+                    "404" => Some("http404"),
+                    "429" => Some("http429"),
+                    _ => Some("checkNetwork"),
+                },
+            )));
+        }
+
+        let bytes = response.bytes().await?;
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor)?;
+
+        if archive.is_empty() {
+            return Err(anyhow::anyhow!(format_skill_error(
+                "EMPTY_ARCHIVE",
+                &[],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        // 检测 zip 是否有根目录（GitHub 格式）
+        let first_file = archive.by_index(0)?;
+        let first_name = first_file.name().to_string();
+        drop(first_file);
+
+        let root_name = first_name.split('/').next().unwrap_or("").to_string();
+        let has_root = !root_name.is_empty() && archive.len() > 1;
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let file_path = file.name().to_string();
+
+            let relative_path = if has_root {
+                // 有根目录，去掉根目录前缀
+                if let Some(stripped) = file_path.strip_prefix(&format!("{root_name}/")) {
+                    stripped.to_string()
+                } else {
+                    continue;
+                }
+            } else {
+                // 没有根目录，直接使用文件路径
+                file_path.clone()
+            };
+
+            if relative_path.is_empty() {
+                continue;
+            }
+
+            // 如果没有根目录，放到以 name 命名的子目录中
+            let outpath = if has_root {
+                dest.join(&relative_path)
+            } else {
+                dest.join(name).join(&relative_path)
+            };
 
             if file.is_dir() {
                 fs::create_dir_all(&outpath)?;

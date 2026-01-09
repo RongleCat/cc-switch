@@ -95,7 +95,8 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1, repo_type TEXT NOT NULL DEFAULT 'github',
+            zip_url TEXT, PRIMARY KEY (owner, name)
         )",
             [],
         )
@@ -302,6 +303,10 @@ impl Database {
             [],
         );
 
+        // 确保 skill_repos 表有新列（对于已存在的数据库）
+        Self::add_column_if_missing(conn, "skill_repos", "repo_type", "TEXT NOT NULL DEFAULT 'github'")?;
+        Self::add_column_if_missing(conn, "skill_repos", "zip_url", "TEXT")?;
+
         Ok(())
     }
 
@@ -426,6 +431,8 @@ impl Database {
             "TEXT NOT NULL DEFAULT 'main'",
         )?;
         Self::add_column_if_missing(conn, "skill_repos", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
+        Self::add_column_if_missing(conn, "skill_repos", "repo_type", "TEXT NOT NULL DEFAULT 'github'")?;
+        Self::add_column_if_missing(conn, "skill_repos", "zip_url", "TEXT")?;
         // 注意: skills_path 字段已被移除，因为现在支持全仓库递归扫描
 
         Ok(())

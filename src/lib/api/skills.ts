@@ -35,6 +35,8 @@ export interface DiscoverableSkill {
   repoOwner: string;
   repoName: string;
   repoBranch: string;
+  repoType?: RepoType;
+  zipUrl?: string;
 }
 
 /** 未管理的 Skill（用于导入） */
@@ -58,12 +60,17 @@ export interface Skill {
   repoBranch?: string;
 }
 
+/** 仓库类型 */
+export type RepoType = "github" | "zip";
+
 /** 仓库配置 */
 export interface SkillRepo {
   owner: string;
   name: string;
   branch: string;
   enabled: boolean;
+  repoType?: RepoType;
+  zipUrl?: string;
 }
 
 // ========== API ==========

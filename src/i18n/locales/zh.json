@@ -886,7 +886,16 @@
       "addFailed": "添加失败",
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
       "removeFailed": "删除失败",
-      "skillCount": "识别到 {{count}} 个技能"
+      "skillCount": "识别到 {{count}} 个技能",
+      "typeGithub": "GitHub 仓库",
+      "typeZip": "技能包链接",
+      "zipName": "名称",
+      "zipNamePlaceholder": "技能包显示名称",
+      "zipUrlLabel": "下载链接",
+      "zipUrlPlaceholder": "https://example.com/skills.zip",
+      "nameRequired": "请输入名称",
+      "zipUrlRequired": "请输入下载链接",
+      "invalidZipUrl": "请输入有效的链接"
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或描述...",

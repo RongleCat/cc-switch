@@ -886,7 +886,16 @@
       "addFailed": "Failed to add",
       "removeSuccess": "Repository {{owner}}/{{name}} removed",
       "removeFailed": "Failed to remove",
-      "skillCount": "{{count}} skills detected"
+      "skillCount": "{{count}} skills detected",
+      "typeGithub": "GitHub Repository",
+      "typeZip": "Skill Package Link",
+      "zipName": "Name",
+      "zipNamePlaceholder": "Skill package display name",
+      "zipUrlLabel": "Download URL",
+      "zipUrlPlaceholder": "https://example.com/skills.zip",
+      "nameRequired": "Please enter a name",
+      "zipUrlRequired": "Please enter a download URL",
+      "invalidZipUrl": "Please enter a valid URL"
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or description...",

@@ -9,7 +9,7 @@
 use crate::app_config::{InstalledSkill, SkillApps};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::services::skill::SkillRepo;
+use crate::services::skill::{RepoType, SkillRepo};
 use indexmap::IndexMap;
 use rusqlite::params;
 
@@ -156,17 +156,24 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT owner, name, branch, enabled FROM skill_repos ORDER BY owner ASC, name ASC",
+                "SELECT owner, name, branch, enabled, repo_type, zip_url FROM skill_repos ORDER BY owner ASC, name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let repo_iter = stmt
             .query_map([], |row| {
+                let repo_type_str: Option<String> = row.get(4)?;
+                let repo_type = match repo_type_str.as_deref() {
+                    Some("zip") => RepoType::Zip,
+                    _ => RepoType::Github,
+                };
                 Ok(SkillRepo {
                     owner: row.get(0)?,
                     name: row.get(1)?,
                     branch: row.get(2)?,
                     enabled: row.get(3)?,
+                    repo_type,
+                    zip_url: row.get(5)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -181,9 +188,13 @@ impl Database {
     /// 保存 Skill 仓库
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let repo_type_str = match repo.repo_type {
+            RepoType::Github => "github",
+            RepoType::Zip => "zip",
+        };
         conn.execute(
-            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
-            params![repo.owner, repo.name, repo.branch, repo.enabled],
+            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled, repo_type, zip_url) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![repo.owner, repo.name, repo.branch, repo.enabled, repo_type_str, repo.zip_url],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
